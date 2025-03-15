@@ -7,11 +7,8 @@ export default function App() {
   console.log("✅ App Component Loaded");
 
   return (
-    <GestureHandlerRootView
-      style={{ flex: 1 }}
-      enableExperimentalWebImplementation
-    >
-      <SafeAreaView style={{ flex: 1 }}>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <SafeAreaView style={{ flex: 1, backgroundColor: "#2196F3" }}>
         <GestureScreen />
       </SafeAreaView>
     </GestureHandlerRootView>

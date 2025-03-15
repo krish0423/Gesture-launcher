@@ -1,218 +1,282 @@
-import React, { useEffect, useState } from "react";
-import { View, Text, Alert, StyleSheet } from "react-native";
+import React, { useState } from "react";
+import {
+  View,
+  Text,
+  StyleSheet,
+  Dimensions,
+  Linking,
+  Alert,
+} from "react-native";
 import { GestureDetector, Gesture } from "react-native-gesture-handler";
-import { Linking } from "react-native";
 import * as Haptics from "expo-haptics";
-import * as tf from "@tensorflow/tfjs";
-import "@tensorflow/tfjs-react-native";
-import * as handpose from "@tensorflow-models/handpose";
+import Svg, { Path } from "react-native-svg";
+
+const { width, height } = Dimensions.get("window");
 
 const openApp = async (appType) => {
+  const appSchemes = {
+    instagram: "instagram://",
+    snapchat: "snapchat://",
+    whatsapp: "whatsapp://",
+    camera: "camera://",
+  };
+
   try {
-    let url;
-    switch (appType) {
-      case "camera":
-        const cameraUrls = [
-          "camera://",
-          "photos-redirect://",
-          "instagram://camera",
-          "snapchat://camera",
-        ];
-
-        for (const cameraUrl of cameraUrls) {
-          const canOpen = await Linking.canOpenURL(cameraUrl);
-          if (canOpen) {
-            url = cameraUrl;
-            break;
-          }
-        }
-        break;
-
-      case "browser":
-        const browserUrls = [
-          "googlechrome://",
-          "chrome://",
-          "https://www.google.com",
-        ];
-
-        for (const browserUrl of browserUrls) {
-          const canOpen = await Linking.canOpenURL(browserUrl);
-          if (canOpen) {
-            url = browserUrl;
-            break;
-          }
-        }
-        break;
-    }
-
-    if (url) {
+    const url = appSchemes[appType];
+    const canOpen = await Linking.canOpenURL(url);
+    if (canOpen) {
       await Linking.openURL(url);
     } else {
-      if (appType === "camera") {
-        Alert.alert("Opening Default Camera");
-        await Linking.openURL("exp://camera");
-      } else {
-        Alert.alert("Opening Default Browser");
-        await Linking.openURL("https://www.google.com");
-      }
+      Alert.alert(
+        "App Not Found",
+        "Please install the app to use this feature"
+      );
     }
   } catch (error) {
-    console.log("URL opening error:", error);
-    Alert.alert("Notice", `Unable to open ${appType}`);
+    Alert.alert("Error", "Unable to open app");
   }
-};
-
-const detectShape = (points) => {
-  const xCoords = points.map((p) => p.x);
-  const yCoords = points.map((p) => p.y);
-
-  const width = Math.max(...xCoords) - Math.min(...xCoords);
-  const height = Math.max(...yCoords) - Math.min(...yCoords);
-
-  if (Math.abs(width - height) < 50) {
-    if (points.length > 20) return "C";
-    return "B";
-  }
-  return "Unknown";
 };
 
 export default function GestureScreen() {
   const [gestureType, setGestureType] = useState("");
-  const [model, setModel] = useState(null);
   const [gesturePath, setGesturePath] = useState([]);
-  const [isModelReady, setIsModelReady] = useState(false);
+  const [pathString, setPathString] = useState("");
+  const [currentLetter, setCurrentLetter] = useState("");
 
-  useEffect(() => {
-    const setupTensorFlow = async () => {
-      try {
-        await tf.ready();
-        await tf.setBackend("cpu");
-        const handposeModel = await handpose.load({
-          maxContinuousChecks: 5,
-          detectionConfidence: 0.8,
-        });
-        setModel(handposeModel);
-        setIsModelReady(true);
-        console.log("TensorFlow and Handpose Model Ready");
-      } catch (error) {
-        console.log("Model initialization error:", error);
-        Alert.alert("Setup Notice", "Running in basic gesture mode");
-      }
-    };
-
-    setupTensorFlow();
-  }, []);
-
-  const recognizeGesture = async (gestureData) => {
-    if (gestureData.length < 2) return;
-
-    try {
-      const shape = detectShape(gestureData);
-      setGestureType(shape);
-
-      switch (shape) {
-        case "C":
-          await Haptics.notificationAsync(
-            Haptics.NotificationFeedbackType.Success
-          );
-          await openApp("camera");
-          break;
-        case "B":
-          await Haptics.notificationAsync(
-            Haptics.NotificationFeedbackType.Success
-          );
-          await openApp("browser");
-          break;
-      }
-    } catch (error) {
-      console.log("Recognition error:", error);
-    }
+  const createPathString = (points) => {
+    if (points.length < 1) return "";
+    const start = points[0];
+    let path = `M ${start.x} ${start.y}`;
+    points.slice(1).forEach((point) => {
+      path += ` L ${point.x} ${point.y}`;
+    });
+    return path;
   };
 
-  const tapGesture = Gesture.Tap()
-    .maxDuration(250)
-    .numberOfTaps(1)
-    .onStart(async () => {
-      setGestureType("Tap");
-      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-      await openApp("browser");
-    })
-    .runOnJS(true);
+  const detectDrawnLetter = (points) => {
+    if (points.length < 10) return "";
+
+    const startPoint = points[0];
+    const endPoint = points[points.length - 1];
+    const verticalDistance = Math.abs(endPoint.y - startPoint.y);
+    const horizontalDistance = Math.abs(endPoint.x - startPoint.x);
+
+    // Detect letter patterns
+    if (verticalDistance > horizontalDistance * 1.5) {
+      setCurrentLetter("I");
+      return "I";
+    }
+
+    if (
+      points.length > 30 &&
+      Math.abs(endPoint.y - startPoint.y) < height * 0.3
+    ) {
+      setCurrentLetter("S");
+      return "S";
+    }
+
+    if (points.length > 20 && horizontalDistance > verticalDistance) {
+      setCurrentLetter("W");
+      return "W";
+    }
+
+    setCurrentLetter("C");
+    return "C";
+  };
 
   const panGesture = Gesture.Pan()
     .minDistance(10)
     .onStart(() => {
       setGesturePath([]);
+      setPathString("");
       setGestureType("Drawing");
+      setCurrentLetter("");
     })
     .onUpdate((event) => {
-      setGesturePath((prevPath) => [...prevPath, { x: event.x, y: event.y }]);
+      const newPoint = { x: event.x, y: event.y };
+      setGesturePath((prev) => {
+        const updatedPath = [...prev, newPoint];
+        setPathString(createPathString(updatedPath));
+        detectDrawnLetter(updatedPath);
+        return updatedPath;
+      });
     })
     .onEnd(async () => {
       await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-      await recognizeGesture(gesturePath);
+      const letter = detectDrawnLetter(gesturePath);
+
+      switch (letter) {
+        case "I":
+          await openApp("instagram");
+          break;
+        case "S":
+          await openApp("snapchat");
+          break;
+        case "W":
+          await openApp("whatsapp");
+          break;
+        case "C":
+          await openApp("camera");
+          break;
+      }
+
+      setTimeout(() => {
+        setPathString("");
+        setGesturePath([]);
+        setCurrentLetter("");
+      }, 1000);
     })
     .runOnJS(true);
 
-  const composedGesture = Gesture.Exclusive(tapGesture, panGesture);
-
   return (
-    <GestureDetector gesture={composedGesture}>
-      <View style={styles.container}>
-        <Text style={styles.status}>
-          System Status: {isModelReady ? "✅ Ready" : "⚙️ Initializing"}
-        </Text>
-        <Text style={styles.text}>Current Gesture: {gestureType}</Text>
-        <View style={styles.instructionsContainer}>
-          <Text style={styles.instructions}>👆 Tap → Launch Browser</Text>
-          <Text style={styles.instructions}>✍️ Draw "C" → Launch Camera</Text>
-          <Text style={styles.instructions}>✍️ Draw "B" → Launch Browser</Text>
-        </View>
-        {gesturePath.length > 0 && (
-          <Text style={styles.progress}>Recording Gesture...</Text>
-        )}
+    <View style={styles.container}>
+      <View style={styles.header}>
+        <Text style={styles.title}>Gesture Launcher</Text>
+        <Text style={styles.subtitle}>Draw Letters to Launch Apps</Text>
       </View>
-    </GestureDetector>
+
+      <GestureDetector gesture={panGesture}>
+        <View style={styles.gestureArea}>
+          <Svg style={StyleSheet.absoluteFill}>
+            <Path
+              d={pathString}
+              stroke="#4A90E2"
+              strokeWidth={4}
+              strokeLinejoin="round"
+              strokeLinecap="round"
+              fill="none"
+            />
+          </Svg>
+
+          {!pathString && (
+            <View style={styles.placeholderContainer}>
+              <Text style={styles.placeholderText}>Draw a Letter</Text>
+              <Text style={styles.placeholderSubtext}>
+                {currentLetter ? `Detected: ${currentLetter}` : "I, S, W, or C"}
+              </Text>
+            </View>
+          )}
+        </View>
+      </GestureDetector>
+
+      <View style={styles.infoContainer}>
+        <View style={styles.instructionsCard}>
+          <Text style={styles.instructionTitle}>Draw Letters to Launch</Text>
+          <View style={styles.instruction}>
+            <Text style={styles.instructionIcon}>📱</Text>
+            <Text style={styles.instructionText}>Draw "I" for Instagram</Text>
+          </View>
+          <View style={styles.instruction}>
+            <Text style={styles.instructionIcon}>👻</Text>
+            <Text style={styles.instructionText}>Draw "S" for Snapchat</Text>
+          </View>
+          <View style={styles.instruction}>
+            <Text style={styles.instructionIcon}>💬</Text>
+            <Text style={styles.instructionText}>Draw "W" for WhatsApp</Text>
+          </View>
+          <View style={styles.instruction}>
+            <Text style={styles.instructionIcon}>📸</Text>
+            <Text style={styles.instructionText}>Draw "C" for Camera</Text>
+          </View>
+        </View>
+      </View>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    justifyContent: "center",
+    backgroundColor: "#F5F6FA",
+  },
+  header: {
+    paddingVertical: 25,
     alignItems: "center",
-    backgroundColor: "#f8f8f8",
-    padding: 20,
-  },
-  status: {
-    fontSize: 20,
-    fontWeight: "bold",
-    marginBottom: 20,
-    color: "#2196F3",
-  },
-  text: {
-    fontSize: 18,
-    fontWeight: "bold",
-    marginBottom: 15,
-    textAlign: "center",
-  },
-  instructionsContainer: {
-    backgroundColor: "#fff",
-    padding: 15,
-    borderRadius: 10,
+    backgroundColor: "#4A90E2",
+    borderBottomLeftRadius: 30,
+    borderBottomRightRadius: 30,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
+    shadowOpacity: 0.2,
+    shadowRadius: 6,
     elevation: 5,
   },
-  instructions: {
-    fontSize: 16,
-    color: "#333",
-    marginVertical: 5,
-  },
-  progress: {
-    marginTop: 20,
-    color: "#4CAF50",
+  title: {
+    fontSize: 32,
     fontWeight: "bold",
+    color: "#fff",
+    letterSpacing: 1,
+  },
+  subtitle: {
+    fontSize: 18,
+    color: "#fff",
+    opacity: 0.9,
+    marginTop: 5,
+  },
+  gestureArea: {
+    flex: 1,
+    backgroundColor: "#ffffff",
+    margin: 20,
+    borderRadius: 25,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.1,
+    shadowRadius: 10,
+    elevation: 5,
+  },
+  placeholderContainer: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 20,
+  },
+  placeholderText: {
+    fontSize: 24,
+    color: "#4A90E2",
+    fontWeight: "600",
+  },
+  placeholderSubtext: {
+    fontSize: 16,
+    color: "#8E8E93",
+    marginTop: 8,
+  },
+  infoContainer: {
+    padding: 20,
+    paddingBottom: 30,
+  },
+  instructionsCard: {
+    backgroundColor: "#fff",
+    borderRadius: 20,
+    padding: 20,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 5,
+  },
+  instructionTitle: {
+    fontSize: 22,
+    fontWeight: "bold",
+    color: "#4A90E2",
+    marginBottom: 20,
+    textAlign: "center",
+  },
+  instruction: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "#F0F0F5",
+  },
+  instructionIcon: {
+    fontSize: 26,
+    width: 40,
+    marginRight: 15,
+  },
+  instructionText: {
+    fontSize: 17,
+    color: "#2C3E50",
+    flex: 1,
+    fontWeight: "500",
   },
 });
